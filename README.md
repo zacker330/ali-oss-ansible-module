@@ -1,6 +1,6 @@
 An ansible module of Aliyun OSS service
 ---
-实现在Ansible中使用Aliyun OSS服务，需要提前安装 oss2 包：`pip install oss2`
+实现在Ansible中使用Aliyun OSS服务，需要提前在目标机器上安装 oss2 包：`pip install oss2`
 
 ### example
 
