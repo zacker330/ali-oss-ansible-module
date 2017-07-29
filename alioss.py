@@ -1,4 +1,6 @@
 #!/usr/bin/python
+
+
 DOCUMENTATION = '''
 ---
 module: alioss
@@ -34,7 +36,47 @@ import oss2
 import os,sys
 
 
-def alioss_upload(data):
+def get_state(b_path):
+    ''' Find out current state '''
+    if os.path.islink(b_path):
+        return 'link'
+    elif os.path.isdir(b_path):
+        return 'directory'
+    elif os.stat(b_path).st_nlink > 1:
+        return 'hard'
+    else:
+        # could be many other things, but defaulting to file
+        return 'file'
+
+
+def recursive_set_attributes(module, b_path, follow, file_args):
+    changed = False
+    if get_state(b_path) == 'file':
+        tmp_file_args = file_args.copy()
+        tmp_file_args['path'] = to_native(b_path, errors='surrogate_or_strict')
+        changed |= module.set_fs_attributes_if_different(tmp_file_args, changed)
+    elif  get_state(b_path) == 'directory':
+        for b_root, b_dirs, b_files in os.walk(b_path):
+            for b_fsobj in b_dirs + b_files:
+                b_fsname = os.path.join(b_root, b_fsobj)
+                if not os.path.islink(b_fsname):
+                    tmp_file_args = file_args.copy()
+                    tmp_file_args['path'] = to_native(b_fsname, errors='surrogate_or_strict')
+                    changed |= module.set_fs_attributes_if_different(tmp_file_args, changed)
+                else:
+                    tmp_file_args = file_args.copy()
+                    tmp_file_args['path'] = to_native(b_fsname, errors='surrogate_or_strict')
+                    changed |= module.set_fs_attributes_if_different(tmp_file_args, changed)
+                    if follow:
+                        b_fsname = os.path.join(b_root, os.readlink(b_fsname))
+                        if os.path.isdir(b_fsname):
+                            changed |= recursive_set_attributes(module, b_fsname, follow, file_args)
+                        tmp_file_args = file_args.copy()
+                        tmp_file_args['path'] = to_native(b_fsname, errors='surrogate_or_strict')
+                        changed |= module.set_fs_attributes_if_different(tmp_file_args, changed)
+    return changed
+
+def alioss_upload(module, data):
 
     try:
         oss_key = data['access_key_id']
@@ -55,25 +97,43 @@ def alioss_upload(data):
         return True, {"response": "upload success"}
 
 
-def alioss_download(data):
+def alioss_download(module, data):
+    changed = False
     try:
+
         oss_key = data['access_key_id']
         oss_AccessKeySecret = data['access_key_secure']
         endpoint = data['endpoint']
         bucket = data['bucket']
         path = data['path']
         object_name = data['object_name']
+        # follow = True
+        # follow = data['follow']
+        ## get files
+        file_args = module.load_file_common_arguments(data)
+        changed = recursive_set_attributes(
+                module,
+                to_bytes(file_args['path'],
+                    errors='surrogate_or_strict'),
+                True,
+                file_args)
 
+        ## if path exists don't continue
+        exists = os.path.exists(path)
+        if exists:
+            return changed, {"success"}
+        ### download
         auth = oss2.Auth(oss_key,oss_AccessKeySecret)
         bucket = oss2.Bucket(auth, endpoint, bucket)
-
         f = open(path,"w")
         f.write(bucket.get_object(object_name).read())
         f.close()
+        changed = True
     except BaseException as e:
-        return False, {'response': e}
+        # return False, {'response': e}
+        module.fail_json(msg= e)
     else:
-        return True, {"response": "download success"}
+        return changed, {"response": "download success"}
 
 
 
@@ -97,10 +157,21 @@ def main():
     }
 
 
-    module = AnsibleModule(argument_spec=fields)
-    has_changed, result = choice_map.get(module.params['target'])(module.params)
+    module = AnsibleModule(
+        argument_spec=fields,
+        add_file_common_args=True
+    )
+    has_changed, result = choice_map.get(module.params['target'])(module, module.params)
     module.exit_json(changed=has_changed, meta=result)
-
+    # auth = oss2.Auth(oss_key,oss_AccessKeySecret)
+    # bucket = oss2.Bucket(auth, endpoint, 'cibuckets')
+    #
+    #
+    # f = open(pacakge_write_to,"w")
+    #
+    # f.write(bucket.get_object(package_path).read())
+    #
+    # f.close()
 
 
 if __name__ == '__main__':

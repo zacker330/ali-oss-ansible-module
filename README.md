@@ -23,6 +23,9 @@ An ansible module of Aliyun OSS service
     bucket: "buckets"
     target: "download"
     path: "/tmp/download.yml"
+    owner: "vagrant"
+    group: "vagrant"
+    mode: "ug=rwx, o=rx"
     object_name:  "tmp/upload.yml"
   register: result
 ```
